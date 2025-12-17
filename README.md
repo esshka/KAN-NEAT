@@ -1,6 +1,8 @@
 # HyperNEAT from Scratch (Pure Python)
 
-A clean, dependency-free implementation of **HyperNEAT** (and the underlying **NEAT** algorithm) written in pure Python.
+A clean, dependency-free implementation of **HyperNEAT** (NeuroEvolution of Augmenting Topologies with Hypercube-based Geometric Connectivity) written in pure Python.
+
+This project also includes **KAN-NEAT**, an extension that evolves **Kolmogorov-Arnold Networks** where connections have learnable activation functions (B-Splines, etc.) instead of just scalar weights.
 
 ## Features
 
@@ -8,32 +10,70 @@ A clean, dependency-free implementation of **HyperNEAT** (and the underlying **N
 - **NEAT Engine**: Full implementation of NeuroEvolution of Augmenting Topologies.
   - Speciation to protect innovation.
   - Complexification (starting minimal and growing).
-  - Historical Markings (Innovation Numbers).
+  - Historical Markings (Global Innovation Numbers).
 - **HyperNEAT Substrate**: Geometric connectivity mapping.
-  - Uses CPPNs (Compositional Pattern Producing Networks) to paint weights onto a target network based on coordinates.
-- **Customizable**: Easy to extend activations, genes, and mutation logic.
+  - Uses CPPNs (Compositional Pattern Producing Networks) to "paint" weights onto a target network based on coordinates.
+- **KAN-NEAT**: Support for evolving edges with learnable activation functions (B-splines, Sine, Gaussian, etc.).
+- **Deep HyperNEAT**: Multi-layer substrate configurations.
+- **Memory Support**: Capable of evolving Recurrent Neural Networks (RNNs) with dynamic gating and self-loops.
 
 ## Project Structure
 
 ```
 .
-├── hyperneat/
-│   ├── activations.py   # Activation functions (Sigmoid, Gaussian, Sine, etc.)
-│   ├── genes.py         # NodeGene and ConnectionGene
+├── hyperneat/           # Core Library
+│   ├── activations.py   # Activation functions (Sigmoid, B-Spline, etc.)
+│   ├── genes.py         # NodeGene and ConnectionGene (supports KAN edges)
 │   ├── genome.py        # Genotype & Evolutionary Operators (Mutate, Crossover)
-│   ├── phenotype.py     # FeedForwardNetwork builder
+│   ├── phenotype.py     # FeedForwardNetwork & RecurrentNetwork
 │   ├── population.py    # Evolution loop & Reproduction logic
 │   ├── species.py       # Speciation logic
 │   └── substrate.py     # HyperNEAT coordinate mapper
-├── xor_test.py          # NEAT verification (XOR problem)
-└── substrate_test.py    # HyperNEAT substrate verification
+├── benchmarks/          # Experiments & Performance Tests
+│   ├── copy_task/       # Sequential Memory Task
+│   ├── inverse_kinematics/ # Geometric Control Task
+│   └── parentheses/     # Stack/Recursive Logic Task
+└── README.md
 ```
+
+## Benchmarks
+
+The `benchmarks/` directory contains rigorous tests comparing 4 different algorithm variants. Each benchmark folder typically contains a runner for each variant.
+
+| Benchmark | Description | Goal |
+|-----------|-------------|------|
+| **Copy Task** | Network must remember a sequence of inputs and replay them after a delay. | Test **Memory** and Recurrence. |
+| **Inverse Kinematics** | Calculate joint angles to reach a target (x, y) coordinate. | Test **Geometric Understanding** and continuous function approximation. |
+| **Parentheses** | Determine if a string of nested parentheses is valid. | Test **Hierarchical/Stack-like Logic**. |
+
+### Algorithm Variants
+
+1.  **NEAT**: Standard NeuroEvolution of Augmenting Topologies. Direct encoding.
+    *   File: `neat_*.py`
+2.  **KAN-NEAT**: NEAT with **Learnable Edges**. Connections can be B-Splines or other functions.
+    *   File: `kan_neat_*.py`
+3.  **Deep HyperNEAT**: HyperNEAT with a deep CPPN. Indirect encoding.
+    *   File: `deep_hyperneat_*.py`
+4.  **Deep KAN-HyperNEAT**: HyperNEAT where the CPPN itself is a KAN. Indirect encoding with learnable edges in the creating network.
+    *   File: `deep_kan_hyperneat_*.py`
 
 ## Usage
 
-### 1. Standard NEAT (Evolving a Network)
+### Running a Benchmark
 
-See `xor_test.py` for a full example.
+To run a benchmark, simply execute the python script from the root directory:
+
+```bash
+# Run Standard NEAT on the Copy Task
+poetry run python benchmarks/copy_task/neat_copy.py
+
+# Run KAN-HyperNEAT on Inverse Kinematics
+poetry run python benchmarks/inverse_kinematics/deep_kan_hyperneat_ik.py
+```
+
+### Basic Example (XOR with KAN-NEAT)
+
+You can create simple scripts to test the engine. Here is a conceptual example of how to setup a population:
 
 ```python
 from hyperneat.population import Population
@@ -41,121 +81,49 @@ from hyperneat.phenotype import FeedForwardNetwork
 
 def eval_fitness(genomes):
     for genome in genomes:
-        # Create phenotype
+        # Create phenotype (supports KAN edges by default)
         net = FeedForwardNetwork.create(genome)
         
-        # Evaluate
-        output = net.activate([0.0, 1.0])
-        error = (output[0] - 1.0) ** 2
-        genome.fitness = 4.0 - error
+        # Evaluate XOR
+        fitness = 4.0
+        data = [([0,0],0), ([0,1],1), ([1,0],1), ([1,1],0)]
+        for inputs, expected in data:
+            output = net.activate(inputs)[0]
+            fitness -= (output - expected)**2
+        genome.fitness = fitness
 
-# Initialize Population (size, inputs, outputs)
+# Initialize Population (150 individuals, 2 inputs, 1 output)
 pop = Population(150, 2, 1)
 
 # Run Evolution
-winner = pop.run(eval_fitness, 100)
+winner = pop.run(eval_fitness, 50)
+print(f"Winner Fitness: {winner.fitness}")
 ```
 
-### 2. HyperNEAT (Using Substrate)
+## Advanced Configuration
 
-See `substrate_test.py` for context.
+### HyperNEAT Substrate
+To use HyperNEAT, you define a `Substrate` with coordinates:
 
 ```python
 from hyperneat.substrate import Substrate
-from hyperneat.phenotype import FeedForwardNetwork
 
-# Define Geometry
-inputs = [(-1, -1), (0, -1), (1, -1)]
-outputs = [(-1, 1), (0, 1), (1, 1)]
-substrate = Substrate(inputs, outputs)
+# Define 2D coordinates for inputs and outputs
+input_coords = [(-1, -1), (1, -1)]
+output_coords = [(0, 1)]
 
-def eval_hyperneat_fitness(genomes):
-    for genome in genomes:
-        # 1. Create CPPN from Genome
-        cppn = FeedForwardNetwork.create(genome)
-        
-        # 2. Build Target Network via Substrate
-        # Substrate queries CPPN with (x1, y1, x2, y2)
-        target_net = substrate.build_network(cppn)
-        
-        # 3. Evaluate Target Network
-        # ... your task specific evaluation ...
+# Create Substrate
+substrate = Substrate(input_coords, output_coords)
+
+# Build Network from Genome (CPPN)
+target_net = substrate.build_network(cppn_genome)
 ```
 
-### 3. Advanced Features
+### KAN Nodes vs Edges
+In this implementation, **Nodes** are aggregation units (summation), and **Edges** (Connections) contain the non-linearity (activation function).
+- To enable KAN-behavior, ensure the genome mutation parameters allow modifying `activation_type` of `ConnectionGene`.
+- Supported activations: `identity`, `sigmoid`, `gauss`, `sine`, `bspline` (learnable).
 
-#### Link Expression Output (LEO) / Static Gating
-Enable LEO to let the CPPN determine connection existence locally (`use_leo=True`). This requires the CPPN to output 2 values per query: `[weight, gate]`.
+## Contributing
 
-```python
-# Initialize Substrate with LEO
-substrate = Substrate(inputs, outputs, hidden_layers, use_leo=True)
-
-# CPPN must have 2 outputs (Weight, Gate)
-pop = Population(150, 4, 2) 
-```
-
-#### Dynamic Gating (Neuromodulation)
-Allow a node's activation to dynamically modulate a connection's weight: `output = input * weight * gate_node_val`.
-
-```python
-# Create Network
-net = FeedForwardNetwork.create(genome)
-
-# Apply Gate: Node 5 gates connection from Node 1 to Node 2
-# net.gate(gating_node_id, src_id, tgt_id)
-net.gate(5, 1, 2)
-
-# During activation, Node 5's value will scale the 1->2 connection
-```
-
-#### Visualization
-Visualize the substrate geometry and network connectivity, including gating lines.
-
-```python
-from hyperneat.visualize import draw_net
-
-draw_net(substrate, net, filename="network_viz.png")
-```
-
-#### Recurrent Networks
-Enable recurrence in the substrate to allow cycles.
-
-```python
-substrate = Substrate(..., allow_recurrence=True)
-# Builds a RecurrentNetworkFull instead of FeedForwardNetwork
-net = substrate.build_network(cppn)
-```
-
-## Configuration
-
-You can tweak mutation rates and speciation thresholds in:
-- `hyperneat/genome.py` (Mutation probabilities)
-- `hyperneat/population.py` (Speciation threshold)
-
-## KAN-NEAT (Kolmogorov-Arnold NEAT)
-
-This implementation supports **Kolmogorov-Arnold Networks**, where complexity lies in the **edges** (learnable activation functions) rather than the nodes (which are simple sums).
-
-### Features
-- **Learnable Edges**: Connections evolve activation functions (e.g., `sin`, `gauss`, `bspline`, `identity`).
-- **B-Splines**: Supports evolvable B-Spline connections with learnable control points.
-- **Memory**: Recurrent B-Spline loops act as memory cells.
-
-### Example Usage
-See `kan_example.py` for solving XOR using KANs.
-
-```python
-# KAN behavior is enabled by default in the Genome/Phenotype.
-# New connections default to 'bspline'.
-
-from hyperneat.population import Population
-
-def eval_fitness(genomes):
-    for genome in genomes:
-        # Create KAN Phenotype
-        net = FeedForwardNetwork.create(genome)
-        # Edges will apply their specific functions (e.g., spline interpolation)
-        output = net.activate(inputs) 
-        # ...
-```
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
